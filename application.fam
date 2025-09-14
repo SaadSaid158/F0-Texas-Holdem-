@@ -8,7 +8,7 @@ App(
     order=20,
     fap_icon="assets/icon.png",
     fap_category="Games",
-    fap_description="Single-player Texas Hold'em poker against 3 AI opponents",
+    fap_description="Enhanced Texas Hold'em poker with advanced AI, blinds system, and realistic gameplay",
     fap_author="SaadSaid158",
-    fap_version="1.0",
+    fap_version="2.0",
 )

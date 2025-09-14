@@ -4,7 +4,16 @@
 #include <string.h>
 
 void ui_get_card_display(Card card, char* buffer, size_t buffer_size) {
-    poker_get_card_string(card, buffer, buffer_size);
+    const char* rank_chars = "23456789TJQKA";
+    const char* suit_symbols[] = {"♥", "♦", "♣", "♠"};
+    
+    if(buffer_size >= 4) {
+        // Use simple letters for now since Unicode might not be supported
+        const char* suit_chars = "HDCS";
+        buffer[0] = rank_chars[card.rank - 2];
+        buffer[1] = suit_chars[card.suit];
+        buffer[2] = '\0';
+    }
 }
 
 void ui_draw_cards(Canvas* canvas, Card* cards, uint8_t count, uint8_t x, uint8_t y) {
@@ -61,6 +70,21 @@ void ui_draw_player_info(Canvas* canvas, Player* player, uint8_t x, uint8_t y, b
         canvas_draw_str(canvas, x, y + 24, "FOLD");
     } else if(player->all_in) {
         canvas_draw_str(canvas, x, y + 24, "ALL-IN");
+    } else {
+        // Show last action
+        switch(player->last_action) {
+            case ACTION_CHECK:
+                canvas_draw_str(canvas, x, y + 24, "CHECK");
+                break;
+            case ACTION_CALL:
+                canvas_draw_str(canvas, x, y + 24, "CALL");
+                break;
+            case ACTION_RAISE:
+                canvas_draw_str(canvas, x, y + 24, "RAISE");
+                break;
+            default:
+                break;
+        }
     }
 }
 
@@ -144,4 +168,36 @@ void ui_draw_game_screen(Canvas* canvas, GameState* game) {
     const char* phase_names[] = {"Pre-flop", "Flop", "Turn", "River", "Showdown"};
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, SCREEN_WIDTH - 40, 8, phase_names[game->phase]);
+    
+    // Draw hand number
+    char hand_str[16];
+    snprintf(hand_str, sizeof(hand_str), "Hand #%lu", game->hand_number);
+    canvas_draw_str(canvas, 2, 8, hand_str);
+    
+    // Draw blind indicators
+    if(game->phase == PHASE_PREFLOP && game->blinds_posted) {
+        canvas_set_font(canvas, FontSecondary);
+        
+        // Small blind indicator
+        if(game->small_blind_pos == 0) {
+            canvas_draw_str(canvas, 2, SCREEN_HEIGHT - 56, "SB");
+        } else if(game->small_blind_pos == 1) {
+            canvas_draw_str(canvas, 2, 17, "SB");
+        } else if(game->small_blind_pos == 2) {
+            canvas_draw_str(canvas, 50, 17, "SB");
+        } else if(game->small_blind_pos == 3) {
+            canvas_draw_str(canvas, 98, 17, "SB");
+        }
+        
+        // Big blind indicator
+        if(game->big_blind_pos == 0) {
+            canvas_draw_str(canvas, 12, SCREEN_HEIGHT - 56, "BB");
+        } else if(game->big_blind_pos == 1) {
+            canvas_draw_str(canvas, 12, 17, "BB");
+        } else if(game->big_blind_pos == 2) {
+            canvas_draw_str(canvas, 60, 17, "BB");
+        } else if(game->big_blind_pos == 3) {
+            canvas_draw_str(canvas, 108, 17, "BB");
+        }
+    }
 }
