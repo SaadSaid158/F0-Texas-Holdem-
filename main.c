@@ -91,6 +91,7 @@ static void input_callback(InputEvent* input_event, void* ctx) {
                 break;
             case InputKeyBack:
                 // Exit game
+                app->game.game_over = true;
                 break;
             default:
                 break;
