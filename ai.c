@@ -8,18 +8,37 @@ void ai_init_players(AIPlayer* ai_players) {
     ai_players[0].personality = AI_CONSERVATIVE;
     ai_players[0].aggression = 0.3f;
     ai_players[0].bluff_frequency = 0.1f;
+    ai_players[0].hands_played = 0;
+    ai_players[0].hands_won = 0;
+    ai_players[0].position_awareness = 2;
+    ai_players[0].risk_tolerance = 0.3f;
     
     // AI Player 2 - Aggressive
     ai_players[1].difficulty = AI_MEDIUM;
     ai_players[1].personality = AI_AGGRESSIVE;
     ai_players[1].aggression = 0.7f;
     ai_players[1].bluff_frequency = 0.3f;
+    ai_players[1].hands_played = 0;
+    ai_players[1].hands_won = 0;
+    ai_players[1].position_awareness = 3;
+    ai_players[1].risk_tolerance = 0.7f;
     
     // AI Player 3 - Random/Balanced
     ai_players[2].difficulty = AI_MEDIUM;
     ai_players[2].personality = AI_RANDOM;
     ai_players[2].aggression = 0.5f;
     ai_players[2].bluff_frequency = 0.2f;
+    ai_players[2].hands_played = 0;
+    ai_players[2].hands_won = 0;
+    ai_players[2].position_awareness = 2;
+    ai_players[2].risk_tolerance = 0.5f;
+    
+    // Initialize opponent modeling
+    for(uint8_t i = 0; i < 3; i++) {
+        for(uint8_t j = 0; j < MAX_PLAYERS; j++) {
+            ai_players[i].opponent_aggression[j] = 0.5f; // Start with neutral assumption
+        }
+    }
 }
 
 float ai_evaluate_hand_strength(Card* hand, Card* community, uint8_t community_count) {
@@ -110,22 +129,32 @@ PlayerAction ai_decide_action(GameState* game, uint8_t player_index, AIPlayer* a
     float hand_strength = ai_evaluate_hand_strength(player->hand, game->community, game->community_count);
     
     // Calculate pot odds if there's a bet to call
-    float pot_odds = 0.0f;
+    float pot_odds = ai_calculate_pot_odds(game, player_index);
     uint32_t call_amount = game->current_bet - player->bet;
-    if(call_amount > 0) {
-        pot_odds = (float)call_amount / (game->pot + call_amount);
-    }
+    
+    // Evaluate position advantage
+    float position_value = ai_evaluate_position(game, player_index);
     
     // Adjust decision based on personality and hand strength
     float action_threshold = hand_strength;
+    
+    // Position adjustments - better position allows more aggressive play
+    if(ai_player->position_awareness > 0) {
+        action_threshold += (position_value - 0.5f) * 0.1f * ai_player->position_awareness;
+    }
     
     // Personality adjustments
     switch(ai_player->personality) {
         case AI_CONSERVATIVE:
             action_threshold -= 0.1f;
+            // More cautious against aggressive opponents
+            if(ai_should_fold_to_aggression(ai_player, game, player_index)) {
+                action_threshold -= 0.15f;
+            }
             break;
         case AI_AGGRESSIVE:
             action_threshold += 0.1f;
+            // Less affected by opponent aggression
             break;
         case AI_RANDOM:
             action_threshold += ((rand() % 21) - 10) * 0.01f; // +/- 0.1 random
@@ -135,17 +164,38 @@ PlayerAction ai_decide_action(GameState* game, uint8_t player_index, AIPlayer* a
     // Phase-based adjustments
     switch(game->phase) {
         case PHASE_PREFLOP:
-            // Be more conservative pre-flop
-            action_threshold -= 0.05f;
+            // Be more conservative pre-flop, except in good position
+            action_threshold -= 0.05f + (0.05f * (1.0f - position_value));
+            break;
+        case PHASE_FLOP:
+            // Standard adjustments
+            break;
+        case PHASE_TURN:
+            // Slightly more conservative as fewer cards remain
+            action_threshold -= 0.02f;
             break;
         case PHASE_RIVER:
-            // Be more aggressive on river with good hands
+            // Be more aggressive on river with good hands, more cautious with marginal ones
             if(hand_strength > 0.6f) {
                 action_threshold += 0.1f;
+            } else {
+                action_threshold -= 0.05f;
             }
             break;
         default:
             break;
+    }
+    
+    // Stack size considerations
+    float stack_ratio = (float)player->chips / STARTING_CHIPS;
+    if(stack_ratio < 0.3f) {
+        // Short stack - be more aggressive with decent hands
+        if(hand_strength > 0.4f) {
+            action_threshold += 0.1f;
+        }
+    } else if(stack_ratio > 2.0f) {
+        // Big stack - can afford to be more aggressive
+        action_threshold += 0.05f;
     }
     
     // Decide action
@@ -160,17 +210,19 @@ PlayerAction ai_decide_action(GameState* game, uint8_t player_index, AIPlayer* a
         // There's a bet to call
         if(call_amount >= player->chips) {
             // All-in situation
-            if(hand_strength > 0.7f) {
+            if(hand_strength > (0.7f - ai_player->risk_tolerance * 0.2f)) {
                 return ACTION_CALL; // This will be all-in
             } else {
                 return ACTION_FOLD;
             }
         }
         
-        // Normal betting situation
-        if(hand_strength > 0.7f || (hand_strength > 0.4f && ai_should_bluff(ai_player, game, player_index))) {
+        // Normal betting situation with improved logic
+        if(hand_strength > 0.7f || 
+           (hand_strength > 0.4f && ai_should_bluff(ai_player, game, player_index))) {
             return ACTION_RAISE;
-        } else if(hand_strength > 0.3f || pot_odds < 0.3f) {
+        } else if(hand_strength > 0.3f || 
+                  (pot_odds < 0.3f && hand_strength > 0.2f)) {
             return ACTION_CALL;
         } else {
             return ACTION_FOLD;
@@ -227,4 +279,75 @@ uint32_t ai_decide_raise_amount(GameState* game, uint8_t player_index, AIPlayer*
     }
     
     return raise_amount;
+}
+
+float ai_calculate_pot_odds(GameState* game, uint8_t player_index) {
+    Player* player = &game->players[player_index];
+    uint32_t call_amount = game->current_bet - player->bet;
+    
+    if(call_amount == 0) return 0.0f;
+    
+    return (float)call_amount / (game->pot + call_amount);
+}
+
+float ai_evaluate_position(GameState* game, uint8_t player_index) {
+    // Calculate position relative to dealer
+    uint8_t position = (player_index - game->dealer + MAX_PLAYERS) % MAX_PLAYERS;
+    
+    // Later position is better (closer to 1.0)
+    switch(position) {
+        case 0: return 0.1f; // Small blind (worst position)
+        case 1: return 0.2f; // Big blind
+        case 2: return 0.6f; // Early position
+        case 3: return 1.0f; // Button (best position)
+        default: return 0.5f;
+    }
+}
+
+void ai_update_opponent_model(AIPlayer* ai_player, uint8_t opponent_id, PlayerAction action) {
+    if(opponent_id >= MAX_PLAYERS) return;
+    
+    // Update aggression estimation based on action
+    switch(action) {
+        case ACTION_FOLD:
+            ai_player->opponent_aggression[opponent_id] *= 0.95f; // Slightly less aggressive
+            break;
+        case ACTION_CHECK:
+            // No change in aggression estimate
+            break;
+        case ACTION_CALL:
+            ai_player->opponent_aggression[opponent_id] = 
+                (ai_player->opponent_aggression[opponent_id] * 0.9f) + (0.4f * 0.1f);
+            break;
+        case ACTION_RAISE:
+            ai_player->opponent_aggression[opponent_id] = 
+                (ai_player->opponent_aggression[opponent_id] * 0.8f) + (0.8f * 0.2f);
+            break;
+    }
+    
+    // Keep values in range [0.1, 0.9]
+    if(ai_player->opponent_aggression[opponent_id] < 0.1f) {
+        ai_player->opponent_aggression[opponent_id] = 0.1f;
+    }
+    if(ai_player->opponent_aggression[opponent_id] > 0.9f) {
+        ai_player->opponent_aggression[opponent_id] = 0.9f;
+    }
+}
+
+bool ai_should_fold_to_aggression(AIPlayer* ai_player, GameState* game, uint8_t player_index) {
+    // Check if facing a very aggressive opponent
+    uint8_t aggressor = game->current_player;
+    for(uint8_t i = 0; i < MAX_PLAYERS; i++) {
+        if(game->players[i].last_action == ACTION_RAISE && !game->players[i].folded) {
+            aggressor = i;
+            break;
+        }
+    }
+    
+    if(aggressor < MAX_PLAYERS && ai_player->opponent_aggression[aggressor] > 0.7f) {
+        // Facing a very aggressive player - be more cautious
+        return ai_player->risk_tolerance < 0.4f;
+    }
+    
+    return false;
 }

@@ -32,7 +32,8 @@ static void game_update_pot(TexasHoldemApp* app);
 static bool game_is_betting_complete(TexasHoldemApp* app);
 static void game_process_player_action(TexasHoldemApp* app, PlayerAction action);
 static void game_process_ai_turn(TexasHoldemApp* app);
-static void game_show_notification(TexasHoldemApp* app, const char* message);
+static void game_post_blinds(TexasHoldemApp* app);
+static void game_update_ai_models(TexasHoldemApp* app, uint8_t player_id, PlayerAction action);
 
 static void render_callback(Canvas* canvas, void* ctx) {
     TexasHoldemApp* app = (TexasHoldemApp*)ctx;
@@ -147,6 +148,8 @@ static void game_init(TexasHoldemApp* app) {
     app->game.current_bet = 0;
     app->game.active_players = MAX_PLAYERS;
     app->game.game_over = false;
+    app->game.hand_number = 0;
+    app->game.blinds_posted = false;
     
     // Initialize UI state
     app->selected_menu = MENU_CHECK_CALL;
@@ -171,10 +174,15 @@ static void game_new_hand(TexasHoldemApp* app) {
     app->game.pot = 0;
     app->game.current_bet = 0;
     app->game.active_players = MAX_PLAYERS;
+    app->game.hand_number++;
+    app->game.blinds_posted = false;
     
     // Move dealer button
     app->game.dealer = (app->game.dealer + 1) % MAX_PLAYERS;
-    app->game.current_player = (app->game.dealer + 1) % MAX_PLAYERS;
+    
+    // Set blind positions
+    app->game.small_blind_pos = (app->game.dealer + 1) % MAX_PLAYERS;
+    app->game.big_blind_pos = (app->game.dealer + 2) % MAX_PLAYERS;
     
     // Initialize and shuffle deck
     poker_init_deck(&app->game.deck);
@@ -182,6 +190,12 @@ static void game_new_hand(TexasHoldemApp* app) {
     
     // Deal hole cards
     game_deal_cards(app);
+    
+    // Post blinds
+    game_post_blinds(app);
+    
+    // Start betting round with player after big blind
+    app->game.current_player = (app->game.big_blind_pos + 1) % MAX_PLAYERS;
     
     // Start betting round
     game_betting_round(app);
@@ -240,7 +254,10 @@ static void game_process_player_action(TexasHoldemApp* app, PlayerAction action)
             
         case ACTION_RAISE:
             {
-                uint32_t raise_amount = app->game.current_bet * 2; // Simple 2x raise
+                uint32_t min_raise = app->game.current_bet * 2;
+                if(min_raise == 0) min_raise = BIG_BLIND; // Minimum bet if no current bet
+                
+                uint32_t raise_amount = min_raise;
                 if(raise_amount > player->chips) {
                     raise_amount = player->chips;
                     player->all_in = true;
@@ -258,6 +275,9 @@ static void game_process_player_action(TexasHoldemApp* app, PlayerAction action)
             }
             break;
     }
+    
+    // Update AI models with human player's action
+    game_update_ai_models(app, app->game.current_player, action);
     
     // Move to next player
     do {
@@ -327,6 +347,9 @@ static void game_process_ai_turn(TexasHoldemApp* app) {
             }
             break;
     }
+    
+    // Update AI models with this player's action
+    game_update_ai_models(app, app->game.current_player, action);
     
     // Move to next player
     do {
@@ -414,9 +437,10 @@ static void game_next_phase(TexasHoldemApp* app) {
             return;
     }
     
-    // Reset for new betting round
+    // Reset for new betting round - start with player after dealer
     app->game.current_player = (app->game.dealer + 1) % MAX_PLAYERS;
-    while(app->game.players[app->game.current_player].folded) {
+    while(app->game.players[app->game.current_player].folded || 
+          app->game.players[app->game.current_player].all_in) {
         app->game.current_player = (app->game.current_player + 1) % MAX_PLAYERS;
     }
     
@@ -492,6 +516,34 @@ static void game_show_notification(TexasHoldemApp* app, const char* message) {
     strcpy(app->notification_text, message);
     app->show_notification = true;
     app->notification_timer = 0;
+}
+
+static void game_post_blinds(TexasHoldemApp* app) {
+    if(app->game.blinds_posted) return;
+    
+    // Post small blind
+    Player* small_blind = &app->game.players[app->game.small_blind_pos];
+    uint32_t sb_amount = (small_blind->chips >= SMALL_BLIND) ? SMALL_BLIND : small_blind->chips;
+    small_blind->bet = sb_amount;
+    small_blind->chips -= sb_amount;
+    if(small_blind->chips == 0) small_blind->all_in = true;
+    
+    // Post big blind
+    Player* big_blind = &app->game.players[app->game.big_blind_pos];
+    uint32_t bb_amount = (big_blind->chips >= BIG_BLIND) ? BIG_BLIND : big_blind->chips;
+    big_blind->bet = bb_amount;
+    big_blind->chips -= bb_amount;
+    if(big_blind->chips == 0) big_blind->all_in = true;
+    
+    app->game.current_bet = bb_amount;
+    app->game.blinds_posted = true;
+}
+
+static void game_update_ai_models(TexasHoldemApp* app, uint8_t player_id, PlayerAction action) {
+    // Update AI models with opponent's action
+    for(uint8_t i = 0; i < MAX_PLAYERS - 1; i++) {
+        ai_update_opponent_model(&app->ai_players[i], player_id, action);
+    }
 }
 
 int32_t texas_holdem_app(void* p) {

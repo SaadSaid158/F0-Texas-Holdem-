@@ -9,6 +9,8 @@
 #define DECK_SIZE 52
 #define HAND_SIZE 2
 #define COMMUNITY_SIZE 5
+#define SMALL_BLIND 10
+#define BIG_BLIND 20
 
 // Card suits
 typedef enum {
@@ -109,6 +111,10 @@ typedef struct {
     uint32_t current_bet;
     uint8_t active_players;
     bool game_over;
+    uint8_t small_blind_pos;
+    uint8_t big_blind_pos;
+    bool blinds_posted;
+    uint32_t hand_number;
 } GameState;
 
 // Function declarations
