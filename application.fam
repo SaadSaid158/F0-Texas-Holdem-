@@ -1,0 +1,14 @@
+App(
+    appid="texas_holdem",
+    name="Texas Hold'em",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="texas_holdem_app",
+    requires=["gui"],
+    stack_size=4 * 1024,
+    order=20,
+    fap_icon="assets/icon.png",
+    fap_category="Games",
+    fap_description="Single-player Texas Hold'em poker against 3 AI opponents",
+    fap_author="SaadSaid158",
+    fap_version="1.0",
+)
